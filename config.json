@@ -1,3 +1,4 @@
 {
-    "database_path": "C:/Users/adam_casada/Documents/TimeTracker/timesheet.db"
+    //"database_path": "C:/Users/adam_casada/Documents/TimeTracker/timesheet.db"
+    "database_path": "K:/Public/Engineering/Ryan Hisey/Time Tracking/database/timesheet.db"
 }

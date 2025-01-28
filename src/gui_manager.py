@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
 from tkinter import filedialog
+import tkinter.font as tkFont  # Import tkinter.font
 
 class TimeTrackerGUI:
     def __init__(self, db_manager, date_utils):
@@ -11,10 +12,34 @@ class TimeTrackerGUI:
         self.db_manager = db_manager
         self.date_utils = date_utils
         
+        # Add font scaling with reliable default font size
+        self.current_scale = 1.0
+        default_font = tkFont.nametofont("TkDefaultFont")
+        self.default_font_size = default_font.cget("size")
+        if self.default_font_size <= 0:
+            self.default_font_size = 9  # fallback default
+        
+        # Configure Treeview style
+        style = ttk.Style()
+        style.configure("Treeview", rowheight=22)
+        style.map('Treeview', background=[('selected', '#0078D7')])
+        
+        # Configure alternating row colors
+        self.tree_odd_color = "white"    # White for odd rows
+        self.tree_even_color = "#f0f0f0" # Light gray for even rows
+        
+        # Initialize all StringVar variables
         self.selected_week = tk.StringVar()
-        self.use_today = tk.BooleanVar(value=True)  # Set initial value to True
-        self.use_today.trace('w', self.on_use_today_changed)  # Add trace for changes
-        self.is_saving = False  # Add new flag to prevent duplicate saves
+        self.use_today = tk.BooleanVar(value=True)
+        self.project_var = tk.StringVar()
+        self.hours_var = tk.StringVar()
+        
+        # Add traces for validation (update operation names)
+        self.project_var.trace_add('write', self.validate_required_fields)
+        self.hours_var.trace_add('write', self.validate_required_fields)
+        self.use_today.trace_add('write', self.on_use_today_changed)
+
+        self.is_saving = False
         self.setup_gui()
         self.update_ui_state()
         if not self.db_manager.is_connected:
@@ -24,13 +49,21 @@ class TimeTrackerGUI:
         # Setup main window and menu
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
+        
+        # File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Change DB location", command=self.configure_database)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
-        # Main frame setup
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Zoom In", command=lambda: self.change_font_scale(1.2))
+        view_menu.add_command(label="Zoom Out", command=lambda: self.change_font_scale(1/1.2))
+        
+        # Remove scale button code and continue with rest of setup
         frame = ttk.Frame(self.root, padding="10")
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         frame.grid_columnconfigure(0, weight=1)
@@ -38,10 +71,10 @@ class TimeTrackerGUI:
 
         # Week selector section
         self._setup_week_selector(frame)
-        
+
         # Table section
         self._setup_table(frame)
-        
+
         # Entry form section
         self._setup_entry_form(frame)
 
@@ -52,7 +85,7 @@ class TimeTrackerGUI:
     def _setup_week_selector(self, frame):
         ttk.Label(frame, text="Select week:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         weeks = [self.date_utils.format_week_label(i) for i in range(53)]
-        week_combo = ttk.Combobox(frame, textvariable=self.selected_week, values=weeks, 
+        week_combo = ttk.Combobox(frame, textvariable=self.selected_week, values=weeks,
                                  width=24, state='readonly')
         week_combo.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         week_combo.set(weeks[0])
@@ -62,18 +95,22 @@ class TimeTrackerGUI:
         self.status_label.grid(row=2, column=0, pady=5, sticky=tk.W, padx=5)
 
     def _setup_table(self, frame):
-        table_frame = ttk.Frame(frame)
+        table_frame = ttk.Frame(frame, height=700)  # Set fixed height
         table_frame.grid(row=3, column=0, columnspan=4, pady=5, padx=5, sticky='nsew')
-        
-        self.tree = ttk.Treeview(table_frame, 
+        table_frame.grid_propagate(False)  # Prevent frame from shrinking to contents
+
+        self.tree = ttk.Treeview(table_frame,
                                 columns=('Project', 'System', 'Hours', 'Task', 'Day', 'Date', 'Notes'),
-                                show='headings')
+                                show='headings',
+                                style="Treeview")
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         
+        # Add borders to columns
         for col in ('Project', 'System', 'Hours', 'Task', 'Day', 'Date', 'Notes'):
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=200 if col == 'Notes' else 100)
+            self.tree.heading(col, text=col, anchor=tk.W)  # Left align header
+            self.tree.column(col, width=200 if col == 'Notes' else 100, stretch=True, anchor=tk.W)  # Left align content
+            self.tree.tag_configure(col, background='white')  # Ensure background is white
 
         self.tree.grid(row=0, column=0, sticky='nsew')
         scrollbar.grid(row=0, column=1, sticky='ns')
@@ -92,7 +129,7 @@ class TimeTrackerGUI:
         self.cell_editor.bind('<Return>', lambda e: self.handle_edit_complete(True))
         self.cell_editor.bind('<FocusOut>', lambda e: self.handle_edit_complete(False))
         self.cell_editor.bind('<Escape>', lambda e: self.cancel_edit())
-        
+
         self.editing_item = None
         self.editing_column = None
 
@@ -109,22 +146,29 @@ class TimeTrackerGUI:
                   command=self.show_summary).grid(row=5, column=0, pady=5, sticky=tk.W, padx=5)
 
     def _setup_form_fields(self, entry_frame):
-        # Project field
-        self._add_form_field(entry_frame, 'Project', 0, combobox=True, 
+        # Project field with label
+        ttk.Label(entry_frame, text='Project').grid(row=0, column=0, padx=(0,5), pady=5, sticky=tk.W)
+        self._add_form_field(entry_frame, 'Project', 0, combobox=True,
                             values=['Indirect - others', 'Indirect - training', 'Indirect - R&D'],
-                            width=20, var=self.project_var)
+                            width=20, textvariable=self.project_var)
 
-        # System and Hours fields
+        # System and Hours fields with labels
+        ttk.Label(entry_frame, text='System').grid(row=0, column=2, padx=5, pady=5)
         self._add_form_field(entry_frame, 'System', 2, width=8)
-        self._add_form_field(entry_frame, 'Hours', 4, width=8, var=self.hours_var)
+        
+        ttk.Label(entry_frame, text='Hours').grid(row=0, column=4, padx=5, pady=5)
+        self._add_form_field(entry_frame, 'Hours', 4, width=8, textvariable=self.hours_var)
 
-        # Task field
+        # Task field with label
+        ttk.Label(entry_frame, text='Task').grid(row=0, column=6, padx=5, pady=5)
         self._add_form_field(entry_frame, 'Task', 6, combobox=True,
                             values=['', 'Development', 'Support'], width=12)
 
-        # Day field
+        # Day field with label
+        ttk.Label(entry_frame, text='Day').grid(row=0, column=8, padx=5, pady=5)
+        days_of_week = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         self._add_form_field(entry_frame, 'Day', 8, combobox=True,
-                            values=[''] + list(self.date_utils.DAYS_OF_WEEK),
+                            values=[''] + days_of_week,
                             width=10, state='disabled')
 
         # Use today checkbox
@@ -132,14 +176,19 @@ class TimeTrackerGUI:
                                           variable=self.use_today)
         self.today_check.grid(row=0, column=10, padx=5)
 
-        # Notes field
-        self._add_form_field(entry_frame, 'Notes', 0, row=1, width=50, columnspan=8)
+        # Notes field with label
+        ttk.Label(entry_frame, text='Notes').grid(row=1, column=0, padx=(0,5), pady=5, sticky=tk.W)
+        self._add_form_field(entry_frame, 'Notes', 0, row=1, width=50, columnspan=8, sticky=tk.W+tk.E)
 
         # Set initial day value
         self.entries['day'].set(self.date_utils.get_today_day_of_week())
 
     def _add_form_field(self, parent, label, col, row=0, combobox=False, **kwargs):
-        ttk.Label(parent, text=label).grid(row=row, column=col, padx=5, pady=5)
+        # Extract grid-specific parameters
+        grid_kwargs = {}
+        for grid_param in ['columnspan', 'sticky']:
+            if grid_param in kwargs:
+                grid_kwargs[grid_param] = kwargs.pop(grid_param)
         
         if combobox:
             widget = ttk.Combobox(parent, **kwargs)
@@ -147,10 +196,12 @@ class TimeTrackerGUI:
         else:
             widget = ttk.Entry(parent, **kwargs)
             widget.bind('<KeyRelease>', lambda e: self.validate_required_fields())
-        
-        widget.grid(row=row, column=col+1, padx=5, pady=5)
+
+        # Apply grid with separated parameters
+        grid_kwargs.update({'row': row, 'column': col+1, 'padx': 5, 'pady': 5})
+        widget.grid(**grid_kwargs)
         widget.bind('<Return>', lambda e: self.add_entry() if self.validate_required_fields() else None)
-        
+
         self.entries[label.lower()] = widget
 
     def update_ui_state(self):
@@ -230,16 +281,20 @@ class TimeTrackerGUI:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
+        # Configure row tags if they don't exist
+        self.tree.tag_configure('oddrow', background=self.tree_odd_color)
+        self.tree.tag_configure('evenrow', background=self.tree_even_color)
+
         week_dates = self.get_selected_week_dates()
         entries = self.db_manager.get_entries_for_week(
             week_dates[0].strftime('%Y-%m-%d'),
             week_dates[6].strftime('%Y-%m-%d')
         )
 
-        for entry in entries:
-            # Skip the ID (first position) when displaying values
+        for i, entry in enumerate(entries):
             values = list(entry[1:])
-            self.tree.insert('', 'end', values=values, tags=(entry[0],))
+            tag = ('oddrow' if i % 2 else 'evenrow',)  # Alternate row colors
+            self.tree.insert('', 'end', values=values, tags=(entry[0], *tag))
 
     def clear_entries(self):
         for entry in self.entries.values():
@@ -266,16 +321,25 @@ class TimeTrackerGUI:
         summary.title("Weekly Summary")
 
         # Create treeview for summary
-        tree = ttk.Treeview(summary, columns=['Project'] + [d.strftime('%A') for d in week_dates],
-                           show='headings')
+        tree = ttk.Treeview(summary,
+                           columns=['Project'] + [d.strftime('%A') for d in week_dates],
+                           show='headings',
+                           style="Treeview")
+        # Add border to frame
+        tree.master.configure(relief='solid', borderwidth=1)
         tree.pack(padx=10, pady=10)
 
+        # Configure row tags
+        tree.tag_configure('oddrow', background=self.tree_odd_color)
+        tree.tag_configure('evenrow', background=self.tree_even_color)
+
         # Set up columns
-        tree.heading('Project', text='Project')
+        tree.heading('Project', text='Project', anchor=tk.W)  # Left align header
+        tree.column('Project', anchor=tk.W)  # Left align content
         for date in week_dates:
             day = date.strftime('%A')
-            tree.heading(day, text=day)
-            tree.column(day, width=100)
+            tree.heading(day, text=day, anchor=tk.W)  # Left align header
+            tree.column(day, width=100, anchor=tk.W)  # Left align content
 
         # Process data
         summary_dict = {}
@@ -284,10 +348,11 @@ class TimeTrackerGUI:
                 summary_dict[project] = {d.strftime('%A'): 0 for d in week_dates}
             summary_dict[project][day] = hours
 
-        # Insert data
-        for project, days in summary_dict.items():
-            values = [project] + [days[d.strftime('%A')] for d in week_dates]
-            tree.insert('', 'end', values=values)
+        # Insert data with empty strings for zero values and alternating colors
+        for i, (project, days) in enumerate(summary_dict.items()):
+            values = [project] + ['' if days[d.strftime('%A')] == 0 else days[d.strftime('%A')]
+                                for d in week_dates]
+            tree.insert('', 'end', values=values, tags=('oddrow' if i % 2 else 'evenrow'))
 
     def on_double_click(self, event):
         """Handle double click on a cell"""
@@ -468,7 +533,7 @@ class TimeTrackerGUI:
             messagebox.showwarning("Warning", "Please select a row to delete")
             return
             
-        if messagebox.askyesno("Confirm Delete", 
+        if messagebox.askyesno("Confirm Delete",
                              "Are you sure you want to delete the selected row(s)?",
                              icon='warning'):
             for item in selected_items:
@@ -495,5 +560,31 @@ class TimeTrackerGUI:
                 pass
         return False
 
+    def change_font_scale(self, factor):
+        """Change font scale by the given factor"""
+        self.current_scale *= factor
+        new_size = int(self.default_font_size * self.current_scale)
+
+        # Update font sizes
+        style = ttk.Style()
+        style.configure(".", font=('TkDefaultFont', new_size))
+        style.configure("Treeview", font=('TkDefaultFont', new_size))
+        style.configure("Treeview.Heading", font=('TkDefaultFont', new_size))
+
+        # Update combobox fonts
+        self.root.option_add('*TCombobox*Listbox.font', ('TkDefaultFont', new_size))
+        for widget in self.entries.values():
+            if isinstance(widget, ttk.Combobox):
+                widget.configure(font=('TkDefaultFont', new_size))
+            elif isinstance(widget, ttk.Entry):
+                widget.configure(font=('TkDefaultFont', new_size))
+
+        # Update tree column widths
+        if hasattr(self, 'tree'):
+            for col in self.tree.cget('columns'):
+                current_width = self.tree.column(col, 'width')
+                self.tree.column(col, width=int(current_width * factor))
+
     def run(self):
         self.root.mainloop()
+
