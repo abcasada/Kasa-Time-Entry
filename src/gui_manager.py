@@ -21,161 +21,137 @@ class TimeTrackerGUI:
             self.configure_database(initial=True)
 
     def setup_gui(self):
-        # Add menu bar
+        # Setup main window and menu
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        
-        # Add File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Change DB location", command=self.configure_database)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
-        # Week selector
+        # Main frame setup
         frame = ttk.Frame(self.root, padding="10")
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
 
-        # Week selector controls (moved to left and stacked vertically)
-        ttk.Label(frame, text="Select week:").grid(row=0, column=0, padx=5, sticky=tk.W)
+        # Week selector section
+        self._setup_week_selector(frame)
+        
+        # Table section
+        self._setup_table(frame)
+        
+        # Entry form section
+        self._setup_entry_form(frame)
+
+        # Initial setup
+        self.refresh_entries()
+        self.entries['project'].focus_set()
+
+    def _setup_week_selector(self, frame):
+        ttk.Label(frame, text="Select week:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         weeks = [self.date_utils.format_week_label(i) for i in range(53)]
-        week_combo = ttk.Combobox(frame, textvariable=self.selected_week, values=weeks, width=24, state='readonly')
-        week_combo.grid(row=1, column=0, padx=5, sticky=tk.W)
-        week_combo.set(weeks[0])  # Set to current week
+        week_combo = ttk.Combobox(frame, textvariable=self.selected_week, values=weeks, 
+                                 width=24, state='readonly')
+        week_combo.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        week_combo.set(weeks[0])
+        week_combo.bind('<<ComboboxSelected>>', self.on_week_selected)
 
-        # Configure column weights to push buttons to right
-        frame.grid_columnconfigure(2, weight=1)  # Add space between week selector and buttons
-
-        # Add database status label with left alignment
         self.status_label = ttk.Label(frame, text="", foreground="red")
         self.status_label.grid(row=2, column=0, pady=5, sticky=tk.W, padx=5)
 
-        # Create frame for table and scrollbar with left alignment
+    def _setup_table(self, frame):
         table_frame = ttk.Frame(frame)
-        table_frame.grid(row=3, column=0, columnspan=4, pady=10, padx=5, sticky='nsew')
+        table_frame.grid(row=3, column=0, columnspan=4, pady=5, padx=5, sticky='nsew')
         
-        # Configure grid weights to allow expansion
-        frame.grid_rowconfigure(2, weight=1)
-        frame.grid_columnconfigure(0, weight=1)
-        
-        # Entry table with scrollbar
-        self.tree = ttk.Treeview(table_frame, columns=('Project', 'System', 'Hours', 'Task', 'Day', 'Date', 'Notes'),
+        self.tree = ttk.Treeview(table_frame, 
+                                columns=('Project', 'System', 'Hours', 'Task', 'Day', 'Date', 'Notes'),
                                 show='headings')
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         
-        # Grid table and scrollbar
+        for col in ('Project', 'System', 'Hours', 'Task', 'Day', 'Date', 'Notes'):
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=200 if col == 'Notes' else 100)
+
         self.tree.grid(row=0, column=0, sticky='nsew')
         scrollbar.grid(row=0, column=1, sticky='ns')
-        
-        # Configure table frame grid weights
         table_frame.grid_rowconfigure(0, weight=1)
         table_frame.grid_columnconfigure(0, weight=1)
 
-        for col in ('Project', 'System', 'Hours', 'Task', 'Day', 'Date', 'Notes'):
-            self.tree.heading(col, text=col)
-            if col == 'Notes':
-                self.tree.column(col, width=200)  # Make Notes column wider
-            else:
-                self.tree.column(col, width=100)
+        # Table bindings and editor setup
+        self._setup_table_editor()
 
-        # Add bindings for in-place editing and deletion
+    def _setup_table_editor(self):
         self.tree.bind('<Double-1>', self.on_double_click)
+        self.tree.bind('<Delete>', self.handle_delete)
         self.tree.bind('<Escape>', lambda e: self.cancel_edit())
-        self.tree.bind('<Delete>', self.handle_delete)  # Add Delete key binding
         
-        # Create entry widget for cell editing
         self.cell_editor = ttk.Entry(self.tree)
         self.cell_editor.bind('<Return>', lambda e: self.handle_edit_complete(True))
         self.cell_editor.bind('<FocusOut>', lambda e: self.handle_edit_complete(False))
         self.cell_editor.bind('<Escape>', lambda e: self.cancel_edit())
         
-        # Initialize editing state variables
         self.editing_item = None
         self.editing_column = None
 
-        # Add entry form (adjust row number since we removed the delete button)
+    def _setup_entry_form(self, frame):
         entry_frame = ttk.Frame(frame)
-        entry_frame.grid(row=4, column=0, columnspan=4, pady=10, padx=5, sticky=tk.W)  # Changed from row=5 to row=4
+        entry_frame.grid(row=4, column=0, columnspan=4, pady=5, padx=5, sticky=tk.W)
 
+        # Initialize entries dictionary and variables
         self.entries = {}
-        # Add validation variables
-        self.project_var = tk.StringVar()
-        self.hours_var = tk.StringVar()
-        self.project_var.trace('w', self.validate_required_fields)
-        self.hours_var.trace('w', self.validate_required_fields)
-
-        # Replace Project entry with combobox (update to use StringVar)
-        ttk.Label(entry_frame, text='Project').grid(row=0, column=0, padx=(0,5))
-        project_combo = ttk.Combobox(entry_frame, values=['Indirect - others', 'Indirect - training', 'Indirect - R&D'], 
-                                   width=20, textvariable=self.project_var)
-        project_combo.grid(row=0, column=1, padx=5)
-        project_combo.bind('<Key>', self.handle_project_keypress)
-        project_combo.bind('<KeyRelease>', self.handle_project_keypress)
-        self.entries['project'] = project_combo
-
-        # Remaining entry fields (update Hours to use StringVar)
-        entry_fields = ['System', 'Hours']
-        for i, field in enumerate(entry_fields):
-            ttk.Label(entry_frame, text=field).grid(row=0, column=(i+1)*2, padx=5)
-            if field == 'Hours':
-                entry = ttk.Entry(entry_frame, width=8, textvariable=self.hours_var)
-            else:
-                entry = ttk.Entry(entry_frame, width=8)
-            entry.grid(row=0, column=(i+1)*2+1, padx=5)
-            self.entries[field.lower()] = entry
-
-        # Add Task dropdown first
-        ttk.Label(entry_frame, text='Task').grid(row=0, column=6, padx=5)
-        task_combo = ttk.Combobox(entry_frame, values=['Development', 'Support'], width=12)  # Set width for Task
-        task_combo.grid(row=0, column=7, padx=5)
-        task_combo.bind('<Key>', self.handle_combo_keypress)  # Add this line
-        task_combo.bind('<KeyRelease>', self.handle_combo_keypress)
-        task_combo.bind('<<ComboboxSelected>>', lambda e: self.validate_required_fields())
-        self.entries['task'] = task_combo
-
-        # Add Day dropdown second
-        ttk.Label(entry_frame, text='Day').grid(row=0, column=8, padx=5)
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        day_combo = ttk.Combobox(entry_frame, values=days, width=10, state='disabled')  # Set initial state to disabled
-        day_combo.grid(row=0, column=9, padx=5)
-        day_combo.bind('<Key>', self.handle_combo_keypress)
-        day_combo.bind('<KeyRelease>', self.handle_combo_keypress)
-        self.entries['day'] = day_combo
+        self._setup_form_fields(entry_frame)
         
-        # Initialize day based on current state
-        today = self.date_utils.get_today_day_of_week()  # Always set initial value to today
-        day_combo.set(today)
+        # Show weekly summary button
+        ttk.Button(frame, text="Show weekly summary",
+                  command=self.show_summary).grid(row=5, column=0, pady=5, sticky=tk.W, padx=5)
 
-        # Use today checkbox moves after dropdowns
+    def _setup_form_fields(self, entry_frame):
+        # Project field
+        self._add_form_field(entry_frame, 'Project', 0, combobox=True, 
+                            values=['Indirect - others', 'Indirect - training', 'Indirect - R&D'],
+                            width=20, var=self.project_var)
+
+        # System and Hours fields
+        self._add_form_field(entry_frame, 'System', 2, width=8)
+        self._add_form_field(entry_frame, 'Hours', 4, width=8, var=self.hours_var)
+
+        # Task field
+        self._add_form_field(entry_frame, 'Task', 6, combobox=True,
+                            values=['', 'Development', 'Support'], width=12)
+
+        # Day field
+        self._add_form_field(entry_frame, 'Day', 8, combobox=True,
+                            values=[''] + list(self.date_utils.DAYS_OF_WEEK),
+                            width=10, state='disabled')
+
+        # Use today checkbox
         self.today_check = ttk.Checkbutton(entry_frame, text="Use today",
                                           variable=self.use_today)
         self.today_check.grid(row=0, column=10, padx=5)
 
-        # Add Notes field with extra spacing
-        ttk.Label(entry_frame, text='Notes').grid(row=1, column=0, padx=(0,5), sticky=tk.W, pady=(10,0))
-        notes_entry = ttk.Entry(entry_frame, width=50)  # Make it wide enough for notes
-        notes_entry.grid(row=1, column=1, columnspan=8, padx=5, sticky=tk.W+tk.E, pady=(10,0))
-        notes_entry.bind('<KeyRelease>', lambda e: self.validate_required_fields())
-        self.entries['notes'] = notes_entry
+        # Notes field
+        self._add_form_field(entry_frame, 'Notes', 0, row=1, width=50, columnspan=8)
 
-        # Move Add Entry button to next row
-        self.add_button = ttk.Button(entry_frame, text="Add entry", 
-                                   command=self.add_entry, state='disabled')
-        self.add_button.grid(row=2, column=0, columnspan=2, pady=10, padx=(0,5), sticky=tk.W)
+        # Set initial day value
+        self.entries['day'].set(self.date_utils.get_today_day_of_week())
 
-        ttk.Button(frame, text="Show weekly summary",
-                  command=self.show_summary).grid(row=5, column=0, pady=10, sticky=tk.W, padx=5)  # Changed from row=6 to row=5
-
-        # Bind events
-        week_combo.bind('<<ComboboxSelected>>', self.on_week_selected)
-        self.root.bind('<Return>', lambda e: self.add_entry())
-
-        # Initial refresh to show current week's data
-        self.refresh_entries()
+    def _add_form_field(self, parent, label, col, row=0, combobox=False, **kwargs):
+        ttk.Label(parent, text=label).grid(row=row, column=col, padx=5, pady=5)
         
-        # Set initial focus to Project field
-        self.entries['project'].focus_set()
+        if combobox:
+            widget = ttk.Combobox(parent, **kwargs)
+            widget.bind('<<ComboboxSelected>>', lambda e: self.validate_required_fields())
+        else:
+            widget = ttk.Entry(parent, **kwargs)
+            widget.bind('<KeyRelease>', lambda e: self.validate_required_fields())
+        
+        widget.grid(row=row, column=col+1, padx=5, pady=5)
+        widget.bind('<Return>', lambda e: self.add_entry() if self.validate_required_fields() else None)
+        
+        self.entries[label.lower()] = widget
 
     def update_ui_state(self):
         """Update UI elements based on database connection state"""
@@ -395,10 +371,10 @@ class TimeTrackerGUI:
                 except ValueError:
                     messagebox.showerror("Error", "Hours must be a number")
                     return
-            elif column_name == 'Task' and new_value not in ['Development', 'Support']:
-                messagebox.showerror("Error", "Task must be either Development or Support")
+            elif column_name == 'Task' and new_value not in ['', 'Development', 'Support']:
+                messagebox.showerror("Error", "Task must be either Development, Support, or empty")
                 return
-            elif column_name == 'Day' and new_value not in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']:
+            elif column_name == 'Day' and new_value and new_value not in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']:
                 messagebox.showerror("Error", "Invalid day of week")
                 return
             elif column_name == 'System':
@@ -448,76 +424,6 @@ class TimeTrackerGUI:
         self.use_today.set('Current Week' in week)
         # Refresh entries as before
         self.refresh_entries(event)
-
-    def handle_combo_keypress(self, event):
-        """Handle keyboard input in combo boxes"""
-        # Ignore KeyRelease events for special keys
-        if hasattr(event, 'keysym') and event.keysym in ('BackSpace', 'Delete', 'Left', 'Right', 'Up', 'Down'):
-            return
-
-        # Only process KeyPress events
-        if event.type != tk.EventType.KeyPress:
-            return
-
-        combo = event.widget
-        
-        # Use the typed character directly
-        if not event.char:
-            return
-            
-        typed = event.char.lower()
-
-        # Get the values from the combobox
-        values = combo['values']
-        if not values:
-            return
-
-        # Find first match (case-insensitive)
-        for value in values:
-            if value.lower().startswith(typed):
-                # Only set if different to avoid triggering unnecessary events
-                if combo.get() != value:
-                    combo.set(value)
-                break
-
-    def handle_project_keypress(self, event):
-        """Special handling for Project combobox"""
-        # Ignore KeyRelease events for special keys
-        if hasattr(event, 'keysym') and event.keysym in ('BackSpace', 'Delete', 'Left', 'Right', 'Up', 'Down'):
-            return
-
-        # Only process KeyPress events
-        if event.type != tk.EventType.KeyPress:
-            return
-
-        combo = event.widget
-        current_text = combo.get()
-        
-        # Use the typed character directly
-        if not event.char:
-            return
-            
-        typed = event.char.lower()
-
-        # Special handling for Indirect prefix
-        if current_text.lower().startswith('indirect'):
-            if typed == 'o':
-                combo.delete(0, tk.END)
-                combo.insert(0, 'Indirect - others')
-            elif typed == 't':
-                combo.delete(0, tk.END)
-                combo.insert(0, 'Indirect - training')
-            elif typed == 'r':
-                combo.delete(0, tk.END)
-                combo.insert(0, 'Indirect - R&D')
-        else:
-            # Regular prefix matching for initial letter
-            if typed == 'i':
-                combo.delete(0, tk.END)
-                combo.insert(0, 'Indirect - others')
-            # Allow free typing for other values
-        
-        return 'break'  # Prevent default character insertion
 
     def configure_database(self, initial=False):
         """Open dialog to configure database path"""
@@ -571,86 +477,23 @@ class TimeTrackerGUI:
             self.refresh_entries()
 
     def validate_required_fields(self, *args):
-        """Enable/disable Add Entry button based on required fields"""
+        """Enable/disable entry based on required fields, returns True if valid"""
         project = self.project_var.get().strip()
         hours = self.hours_var.get().strip()
         day = self.entries['day'].get().strip()
         task = self.entries['task'].get().strip()
         notes = self.entries['notes'].get().strip()
 
-        # Enable button only if required fields are filled and either Task or Notes has content
-        if project and hours and (day or self.use_today.get()) and (task or notes):
+        # Check if required fields are filled and either Task or Notes has content
+        if project and hours and (task or notes):
             try:
                 hours_val = float(hours)  # Validate hours is a number
                 # Check if hours is a multiple of 0.25
-                if hours_val % 0.25 != 0:
-                    self.add_button.config(state='disabled')
-                    return
-                self.add_button.config(state='normal')
+                if hours_val % 0.25 == 0:
+                    return True
             except ValueError:
-                self.add_button.config(state='disabled')
-        else:
-            self.add_button.config(state='disabled')
-
-    def save_edit(self):
-        """Save the edited cell value"""
-        if not self.editing_item or self.editing_column is None:
-            return
-            
-        try:
-            new_value = self.cell_editor.get()
-            current_values = list(self.tree.item(self.editing_item)['values'])
-            
-            # Validate based on column
-            column_name = self.tree.heading(f'#{self.editing_column + 1}')['text']
-            if column_name == 'Hours':
-                try:
-                    hours_val = float(new_value)
-                    # Validate hours is a multiple of 0.25
-                    if hours_val % 0.25 != 0:
-                        messagebox.showerror("Error", "Hours must be a multiple of 0.25")
-                        return
-                    new_value = hours_val
-                except ValueError:
-                    messagebox.showerror("Error", "Hours must be a number")
-                    return
-            elif column_name == 'Task' and new_value not in ['Development', 'Support']:
-                messagebox.showerror("Error", "Task must be either Development or Support")
-                return
-            elif column_name == 'Day' and new_value not in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']:
-                messagebox.showerror("Error", "Invalid day of week")
-                return
-            elif column_name == 'System':
-                new_value = new_value.upper()
-                
-            current_values[self.editing_column] = new_value
-            
-            # If Day was changed, update the Date
-            if column_name == 'Day':
-                week_dates = self.get_selected_week_dates()
-                new_date = self.date_utils.get_date_for_day(week_dates, new_value)
-                current_values[5] = new_date  # Update date column
-            
-            # Always ensure hours is float for database
-            hours_val = float(current_values[2])
-            
-            # Update database with reordered values
-            entry_id = self.tree.item(self.editing_item)['tags'][0]
-            self.db_manager.update_entry(
-                entry_id,
-                current_values[5],  # date
-                current_values[4],  # day
-                current_values[0],  # project
-                current_values[1],  # system
-                hours_val,          # hours
-                current_values[3]   # task
-            )
-            
-            # Update tree display
-            self.tree.item(self.editing_item, values=current_values)
-            
-        finally:
-            self.cancel_edit()
+                pass
+        return False
 
     def run(self):
         self.root.mainloop()
