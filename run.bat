@@ -1,1 +1,1 @@
-python "C:\ProgramFiles\Kasa Time Entry\src\main.py"
+python "C:\ProgramFiles\Kasa-Time-Entry\src\main.py"
