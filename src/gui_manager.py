@@ -22,6 +22,7 @@ class TimeTrackerGUI:
         # Configure Treeview style
         style = ttk.Style()
         style.configure("Treeview", rowheight=22)
+        style.configure("Treeview.Heading", font=('TkDefaultFont', 9, 'bold'))  # Make headers bold
         style.map('Treeview', background=[('selected', '#0078D7')])
         
         # Configure alternating row colors
@@ -148,9 +149,21 @@ class TimeTrackerGUI:
     def _setup_form_fields(self, entry_frame):
         # Project field with label
         ttk.Label(entry_frame, text='Project').grid(row=0, column=0, padx=(0,5), pady=5, sticky=tk.W)
-        self._add_form_field(entry_frame, 'Project', 0, combobox=True,
-                            values=['Indirect - others', 'Indirect - training', 'Indirect - R&D'],
-                            width=20, textvariable=self.project_var)
+        # Modified project field setup with better autocomplete
+        project_cb = ttk.Combobox(entry_frame, textvariable=self.project_var, width=20)
+        project_cb.grid(row=0, column=1, padx=5, pady=5)
+        project_cb['values'] = ['Indirect - others', 'Indirect - training', 'Indirect - R&D']
+        
+        # Configure project combobox behavior
+        project_cb.bind('<FocusIn>', self.on_project_focus)
+        project_cb.bind('<KeyRelease>', self.on_project_keyrelease)
+        project_cb.bind('<<ComboboxSelected>>', lambda e: self.validate_required_fields())
+        # Add these new bindings
+        project_cb.bind('<Down>', self.on_project_arrow)
+        project_cb.bind('<Up>', self.on_project_arrow)
+        project_cb.bind('<Return>', lambda e: self.add_entry() if self.validate_required_fields() else None)
+        
+        self.entries['project'] = project_cb
 
         # System and Hours fields with labels
         ttk.Label(entry_frame, text='System').grid(row=0, column=2, padx=5, pady=5)
@@ -161,8 +174,19 @@ class TimeTrackerGUI:
 
         # Task field with label
         ttk.Label(entry_frame, text='Task').grid(row=0, column=6, padx=5, pady=5)
-        self._add_form_field(entry_frame, 'Task', 6, combobox=True,
-                            values=['', 'Development', 'Support'], width=12)
+        task_cb = ttk.Combobox(entry_frame, width=12)
+        task_cb.grid(row=0, column=7, padx=5, pady=5)
+        task_cb['values'] = ['', 'Development', 'Support']
+        
+        # Configure task combobox behavior
+        task_cb.bind('<FocusIn>', self.on_task_focus)
+        task_cb.bind('<KeyRelease>', self.on_task_keyrelease)
+        task_cb.bind('<<ComboboxSelected>>', lambda e: self.validate_required_fields())
+        task_cb.bind('<Down>', self.on_task_arrow)
+        task_cb.bind('<Up>', self.on_task_arrow)
+        task_cb.bind('<Return>', lambda e: self.add_entry() if self.validate_required_fields() else None)
+        
+        self.entries['task'] = task_cb
 
         # Day field with label
         ttk.Label(entry_frame, text='Day').grid(row=0, column=8, padx=5, pady=5)
@@ -171,10 +195,11 @@ class TimeTrackerGUI:
                             values=[''] + days_of_week,
                             width=10, state='disabled')
 
-        # Use today checkbox
+        # Use today checkbox with Return key binding
         self.today_check = ttk.Checkbutton(entry_frame, text="Use today",
                                           variable=self.use_today)
         self.today_check.grid(row=0, column=10, padx=5)
+        self.today_check.bind('<Return>', lambda e: self.add_entry() if self.validate_required_fields() else None)
 
         # Notes field with label
         ttk.Label(entry_frame, text='Notes').grid(row=1, column=0, padx=(0,5), pady=5, sticky=tk.W)
@@ -225,7 +250,7 @@ class TimeTrackerGUI:
             if isinstance(widget, ttk.Combobox):
                 if widget == self.entries['day'] and self.use_today.get():
                     widget.config(state='disabled')
-                elif widget == self.entries['project']:
+                elif widget == self.entries['project'] or widget == self.entries['task']:
                     widget.config(state='normal' if self.db_manager.is_connected else 'disabled')
                 else:
                     widget.config(state='readonly' if self.db_manager.is_connected else 'disabled')
@@ -468,7 +493,7 @@ class TimeTrackerGUI:
                 current_values[1],  # system
                 hours_val,          # hours
                 current_values[3],  # task
-                notes              # notes
+                notes               # notes
             )
             
             # Update tree display
@@ -590,4 +615,106 @@ class TimeTrackerGUI:
 
     def run(self):
         self.root.mainloop()
+
+    def on_project_focus(self, event):
+        """When project field gets focus, select all text"""
+        event.widget.select_range(0, tk.END)
+        event.widget.icursor(tk.END)
+        
+    def on_project_keyrelease(self, event):
+        """Handle autocomplete for project field"""
+        if event.keysym in ['Up', 'Down', 'Left', 'Right', 'Return']:
+            return
+            
+        value = event.widget.get()
+        all_values = ['Indirect - others', 'Indirect - training', 'Indirect - R&D']
+        
+        # Special handling for backspace
+        if event.keysym == 'BackSpace':
+            # Remove one more character if there's a selection
+            if event.widget.selection_present():
+                event.widget.delete(event.widget.index("insert")-1)
+            event.widget['values'] = [x for x in all_values if x.lower().startswith(value.lower())]
+            return
+            
+        # Quick selection after typing 'i'
+        if len(value) == 2 and value.lower().startswith('i'):
+            second_char = value[-1].lower()
+            if second_char == 'o':
+                event.widget.set('Indirect - others')
+                event.widget.selection_range(len(value), len('Indirect - others'))
+                event.widget.icursor(len(value))
+                return
+            elif second_char == 't':
+                event.widget.set('Indirect - training')
+                event.widget.selection_range(len(value), len('Indirect - training'))
+                event.widget.icursor(len(value))
+                return
+            elif second_char == 'r':
+                event.widget.set('Indirect - R&D')
+                event.widget.selection_range(len(value), len('Indirect - R&D'))
+                event.widget.icursor(len(value))
+                return
+        
+        if value:
+            # Find first match that starts with current value (case insensitive)
+            match = next((x for x in all_values if x.lower().startswith(value.lower())), None)
+            if match:
+                # Only set if we have something to autocomplete
+                if len(match) > len(value):
+                    event.widget.set(match)
+                    event.widget.selection_range(len(value), len(match))
+                    event.widget.icursor(len(value))
+            
+            # Update dropdown list with all matching values
+            matches = [x for x in all_values if x.lower().startswith(value.lower())]
+            event.widget['values'] = matches if matches else all_values
+        else:
+            event.widget['values'] = all_values
+
+    def on_project_arrow(self, event):
+        """Handle arrow keys in project combobox"""
+        event.widget.event_generate('<Down>' if event.keysym == 'Down' else '<Up>')
+        return 'break'
+
+    def on_task_focus(self, event):
+        """When task field gets focus, select all text"""
+        event.widget.select_range(0, tk.END)
+        event.widget.icursor(tk.END)
+        
+    def on_task_keyrelease(self, event):
+        """Handle autocomplete for task field"""
+        if event.keysym in ['Up', 'Down', 'Left', 'Right', 'Return']:
+            return
+
+        value = event.widget.get()
+        all_values = ['', 'Development', 'Support']
+        
+        # Special handling for backspace
+        if event.keysym == 'BackSpace':
+            if event.widget.selection_present():
+                event.widget.delete(event.widget.index("insert")-1)
+            event.widget['values'] = [x for x in all_values if x.lower().startswith(value.lower())]
+            return
+            
+        if value:
+            # Find first match that starts with current value (case insensitive)
+            match = next((x for x in all_values if x.lower().startswith(value.lower())), None)
+            if match:
+                # Only set if we have something to autocomplete
+                if len(match) > len(value):
+                    event.widget.set(match)
+                    event.widget.selection_range(len(value), len(match))
+                    event.widget.icursor(len(value))
+            
+            # Update dropdown list with all matching values
+            matches = [x for x in all_values if x.lower().startswith(value.lower())]
+            event.widget['values'] = matches if matches else all_values
+        else:
+            event.widget['values'] = all_values
+
+    def on_task_arrow(self, event):
+        """Handle arrow keys in task combobox"""
+        event.widget.event_generate('<Down>' if event.keysym == 'Down' else '<Up>')
+        return 'break'
 
