@@ -244,10 +244,10 @@ class TimeTrackerGUI:
             return
         try:
             project = self.entries['project'].get()
-            system = self.entries['system'].get().upper()  # Already uppercase, but being explicit
+            system = self.entries['system'].get().upper()
             hours = float(self.entries['hours'].get())
             task = self.entries['task'].get()
-            notes = self.entries['notes'].get()  # Get notes value
+            notes = self.entries['notes'].get()
             
             if self.use_today.get():
                 day_of_week = self.date_utils.get_today_day_of_week()
@@ -257,7 +257,7 @@ class TimeTrackerGUI:
             week_dates = self.get_selected_week_dates()
             date = self.date_utils.get_date_for_day(week_dates, day_of_week)
 
-            self.db_manager.add_entry(date, day_of_week, project, system, hours, task)
+            self.db_manager.add_entry(date, day_of_week, project, system, hours, task, notes)
             self.refresh_entries()
             self.clear_entries()
             
@@ -458,6 +458,8 @@ class TimeTrackerGUI:
             
             # Update database with reordered values
             entry_id = self.tree.item(self.editing_item)['tags'][0]
+            notes = current_values[6] if len(current_values) > 6 else ""  # Get notes from values
+            
             self.db_manager.update_entry(
                 entry_id,
                 current_values[5],  # date
@@ -465,7 +467,8 @@ class TimeTrackerGUI:
                 current_values[0],  # project
                 current_values[1],  # system
                 hours_val,          # hours
-                current_values[3]   # task
+                current_values[3],  # task
+                notes              # notes
             )
             
             # Update tree display
